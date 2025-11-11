@@ -1,0 +1,6 @@
+streamlit
+groq
+python-dotenv
+tenacity
+pytest
+pytest-mock
