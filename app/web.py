@@ -15,36 +15,71 @@ st.title("AI Copilot")
 
 conversation.inicializar_estado(st.session_state)
 
-# Mostrar historial
+# --- Sidebar para información extra ---
+with st.sidebar:
+    st.header("Estado de Sesión")
+    # Mostrar métrica de turnos restantes (requisito visible)
+    turnos_restantes = conversation.MAX_TURNOS - st.session_state.turn_count
+    st.metric("Turnos restantes", turnos_restantes)
+    
+    # Mostrar notas guardadas
+    if st.session_state.notas:
+        st.subheader("Mis Notas")
+        for i, nota in enumerate(st.session_state.notas, 1):
+            st.caption(f"{i}. {nota}")
+
+# --- Mostrar historial principal ---
 for mensaje in st.session_state.messages:
     with st.chat_message(mensaje["role"]):
         st.markdown(mensaje["content"])
 
-# Manejar nuevo mensaje
+# --- Manejo del Input del Usuario ---
 if prompt := st.chat_input("Escribe aquí..."):
+    # 1. Verificar límite de turnos
+    if st.session_state.turn_count >= conversation.MAX_TURNOS:
+        st.error("Has alcanzado el límite de turnos para esta sesión demo. Por favor, recarga la página para iniciar una nueva.")
+        st.stop()
+
+    # Mostrar mensaje del usuario
     with st.chat_message("user"):
         st.markdown(prompt)
     conversation.agregar_mensaje(st.session_state, "user", prompt)
 
-    with st.chat_message("assistant"):
-        contenedor = st.empty()
-        contenedor.markdown("Pensando...")
-        try:
-            inicio = time.time()
-            # Preparar contexto y llamar a Groq
-            historial = conversation.obtener_historial_truncado(st.session_state)
-            mensajes = prompting.construir_prompt_con_historial(historial)
+    # 2. Verificar Intents Simples (sin llamar al LLM)
+    if prompt.lower().startswith("/nota "):
+        texto_nota = prompt[6:].strip() # Extraer el texto después de "/nota "
+        respuesta_nota = conversation.guardar_nota(st.session_state, texto_nota)
+        
+        with st.chat_message("assistant"):
+            st.markdown(respuesta_nota)
+        conversation.agregar_mensaje(st.session_state, "assistant", respuesta_nota)
+        st.rerun() # Recargar para actualizar la sidebar inmediatamente
 
-            respuesta = llm.client.chat.completions.create(
-                messages=mensajes,
-                model=llm.MODELO,
-                temperature=0.7
-            ).choices[0].message.content
+    # 3. Flujo normal con LLM
+    else:
+        with st.chat_message("assistant"):
+            contenedor = st.empty()
+            contenedor.markdown("Pensando...")
+            try:
+                inicio = time.time()
+                historial = conversation.obtener_historial_truncado(st.session_state)
+                mensajes = prompting.construir_prompt_con_historial(historial)
 
-            fin = time.time()
-            contenedor.markdown(respuesta)
-            st.caption(f"Tiempo de respuesta: {fin - inicio:.2f}s")
-            conversation.agregar_mensaje(st.session_state, "assistant", respuesta)
+                # --- LLAMADA A API CON PARÁMETROS COMPLETOS ---
+                respuesta = llm.client.chat.completions.create(
+                    messages=mensajes,
+                    model=llm.MODELO,
+                    temperature=0.7,
+                    max_tokens=1024, 
+                    top_p=0.8,        
+                    seed=42            
+                ).choices[0].message.content
+                # ----------------------------------------------
 
-        except Exception as e:
-            contenedor.error(f"Error: {e}")
+                fin = time.time()
+                contenedor.markdown(respuesta)
+                st.caption(f"Tiempo de respuesta: {fin - inicio:.2f}s")
+                conversation.agregar_mensaje(st.session_state, "assistant", respuesta)
+
+            except Exception as e:
+                contenedor.error(f"Error: {e}")
